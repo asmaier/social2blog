@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from string import Template
 import re
+from linkpreview import link_preview
 
 # see https://stackoverflow.com/questions/5574042/string-slugification-in-python
 def _slugify(text):
@@ -28,34 +29,51 @@ if not target.exists():
 		target.mkdir(parents=True, exist_ok=True) 
 		infile.extractall(target)
 
-with open("post_template.md", "r") as temp_file:
-	post_template = Template(temp_file.read())	
+posts = target / "posts" / "your_posts_1.json"
+with posts.open(encoding="raw_unicode_escape") as f:
+	# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
+	data = json.loads(f.read().encode("raw_unicode_escape").decode())
+	for post in data[:10]:
+		content = ""
+		for element in post["data"]:
+			if "post" in element:
+				content = element["post"]		
 
-	posts = target / "posts" / "your_posts_1.json"
-	with posts.open(encoding="raw_unicode_escape") as f:
-		# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
-		data = json.loads(f.read().encode("raw_unicode_escape").decode())
-		for post in data[:10]:
-			content = ""
-			for element in post["data"]:
-				if "post" in element:
-					content = element["post"]		
+		tokens = len(content.split())
+		if tokens > 3:
+			title = " ".join(content.split()[:3]) + " ..."
+		else:
+			title = " ".join(content.split()[:tokens]) + " ..."
+		# Put title in single quotes to prevent YAML issues in Hugo			
+		title = "'" + title + "'"   		
 
-			tokens = len(content.split())
-			if tokens > 3:
-				title = " ".join(content.split()[:3]) + " ..."
-			else:
-				title = " ".join(content.split()[:tokens]) + " ..."
-			# Put title in single quotes to prevent YAML issues in Hugo			
-			title = "'" + title + "'"   		
+		t = int(post["timestamp"])
+		date_time = datetime.fromtimestamp(t).astimezone()
+		date = date_time.date()
 
-			t = int(post["timestamp"])
-			date_time = datetime.fromtimestamp(t).astimezone()
-			date = date_time.date()
+		url = None
+		if "attachments" in post:
+			for attachment in post["attachments"]:
+				#print(attachment)
+				if "data" in attachment:
+					for element in attachment["data"]:
+						#print(element)
+						if "external_context" in element:
+							url = element["external_context"]["url"]
+		if url:				
+			preview = link_preview(url)
+			content += "\n"
+			if preview.image:
+				content += "> [![]("+ preview.image + ")](" + url + ")\n"
+			content += "> ## [" + preview.title + "](" + url + ")\n"
+			content += ">\n"
+			content += ">" + preview.description + "\n"
 
-			filename = _slugify(date.isoformat() + "-" + title) + ".md"
-			output_path = pathlib.Path(args.output) / filename
-			with output_path.open("w") as outfile:
+		filename = _slugify(date.isoformat() + "-" + title) + ".md"
+		output_path = pathlib.Path(args.output) / filename
+		with output_path.open("w") as outfile:
+			with open("post_template.md", "r") as temp_file:
+				post_template = Template(temp_file.read())	
 				markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
 				outfile.write(markdown)
 				# print(markdown)
