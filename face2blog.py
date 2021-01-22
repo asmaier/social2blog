@@ -36,12 +36,15 @@ posts = target / "posts" / "your_posts_1.json"
 with posts.open(encoding="raw_unicode_escape") as f:
 	# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
 	data = json.loads(f.read().encode("raw_unicode_escape").decode())
-	for post in data[:]:
+	for post in data[820:]:
 
-		# skip facebook posts with messsages to other peoples "Chronik"
 		if "title" in post:
+			# skip facebook posts with messsages to other peoples "Chronik"
 			if "Chronik" in post["title"]:
 				continue
+			# skip facebook posts showing that the author is is "Sicherheit"	
+			if "Sicherheit" in post["title"]:
+				continue	
 
 		# get timestamp	
 		t = int(post["timestamp"])
@@ -50,9 +53,10 @@ with posts.open(encoding="raw_unicode_escape") as f:
 
 		# generate a title from the content
 		content = ""
-		for element in post["data"]:
-			if "post" in element:
-				content = element["post"]		
+		if "data" in post:
+			for element in post["data"]:
+				if "post" in element:
+					content = element["post"]		
 
 		title = ""		
 		tokens = [token for token in content.split() if "http" not in token]		
@@ -77,7 +81,8 @@ with posts.open(encoding="raw_unicode_escape") as f:
 		if url:
 			try:
 				# see https://stackoverflow.com/questions/27652543/how-to-use-python-requests-to-fake-a-browser-visit-a-k-a-and-generate-user-agent
-				headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'} 	
+				# and http://www.useragentstring.com/pages/useragentstring.php?name=Chrome
+				headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36'} 	
 				r = requests.get(url, headers=headers)
 				uri = urlparse(r.url)
 				domain = re.sub('^www\.', '', uri.netloc)
@@ -92,17 +97,25 @@ with posts.open(encoding="raw_unicode_escape") as f:
 					content += "> [![]("+ preview.image + ")](" + url + ")\n"
 
 				content += "> " + domain + "\n"	
-				content += "> ## [" + preview.title + "](" + url + ")\n"
+				if preview.title:
+					content += "> ## [" + preview.title + "](" + url + ")\n"
+				else:
+					content += "> ## [" + preview.force_title + "](" + url + ")\n"	
 				content += ">\n"
-				if preview.description:
-					content += ">" + preview.description + "\n"
+				try:
+					if preview.description:
+						content += ">" + preview.description + "\n"
+				except KeyError as kerr:
+					# catch a weird exception when reading the description
+					# (probably caused by a bug in beautifulSoup)
+					print(kerr)		
 				# In case the content was empty get the title from the preview	
 				if not title:
 					if not preview.title:
 						title = preview.force_title
 					else:
 						title = preview.title	
-			except (requests.exceptions.RequestException, linkpreview.exceptions.MaximumContentSizeError) as err:
+			except (requests.exceptions.RequestException, linkpreview.exceptions.LinkPreviewException) as err:
 				print(err)
 				content += "\n"
 				content += "> " + url + "\n"
