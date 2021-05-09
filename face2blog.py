@@ -10,6 +10,9 @@ from linkpreview import Link, LinkPreview, LinkGrabber
 import requests
 from urllib.parse import urlparse
 
+IN_PATH = ""
+OUT_PATH = ""
+
 # see https://stackoverflow.com/questions/5574042/string-slugification-in-python
 def _slugify(text):
 	import unicodedata
@@ -109,16 +112,65 @@ def _create_markdown(url, preview, domain):
 		print(kerr)
 	return markdown			
 
+def _process_post(post):
+	if not _valid(post):
+		return None
+
+	date_time = _extract_date_time(post)
+	content = _extract_content(post)	
+	title = _create_title(content) 		
+	url = _extract_url(post)
+
+	content += "\n"
+
+	if not title and not url:
+		# if we have neither url nor a title the post is empty and we skip it
+		return None
+
+	if url:
+		try:
+			preview, domain = _get_preview(url)
+			preview_md = _create_markdown(url, preview, domain)
+
+			# In case the content was empty get the title from the preview	
+			if not title:
+				title = preview.title
+			# if preview.title was also empty use the force title	
+			if not title:
+				title = preview.force_title
+					
+		except (requests.exceptions.RequestException, linkpreview.exceptions.LinkPreviewException) as err:
+			print(url)
+			print(err)
+			preview_md = "> " + url + "\n"		
+	# add markdown with preview to content of post 
+	content += preview_md
+
+	print(date_time, title)
+	return (title, date_time, content)
+
+def _write_outfile(title, date_time, content):
+    date = date_time.date()
+    filename = _slugify(date.isoformat() + "-" + title) + ".md"
+    output_path = pathlib.Path(OUT_PATH) / filename
+    with output_path.open("w") as outfile:
+            with open("post_template.md", "r") as temp_file:
+                    post_template = Template(temp_file.read())	
+                    markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
+                    outfile.write(markdown)
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
 	parser.add_argument("input", type=str, help="Input file - the zip file downloaded from facebook")
 	parser.add_argument("output", type=str, help="Output directory for markdown files")
 	args = parser.parse_args()
+	
+	IN_PATH = args.input
+	OUT_PATH = args.output
 
 	target = pathlib.Path(args.input).with_suffix("")
 	if not target.exists(): 
-		with zipfile.ZipFile(args.input,"r") as infile:
+		with zipfile.ZipFile(IN_PATH,"r") as infile:
 			target.mkdir(parents=True, exist_ok=True) 
 			infile.extractall(target)
 
@@ -126,49 +178,20 @@ if __name__ == "__main__":
 	with posts.open(encoding="raw_unicode_escape") as f:
 		# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
 		data = json.loads(f.read().encode("raw_unicode_escape").decode())
+
+
+		# with concurrent.futures.Executor() as executor:
+    	# 	futures = {
+        # 		executor.submit(perform, post) for post in data[:10]
+    	# 	}
+
+		# for fut in concurrent.futures.as_completed(futures):
+        # 	print(f"The outcome is {fut.result()}")
+
 		for post in data[:10]:
+			result = _process_post(post)
 
-			if not _valid(post):
-				continue
+			if result:
+				_write_outfile(result[0], result[1], result[2])
 
-			date_time = _extract_date_time(post)
-			date = date_time.date()
-			content = _extract_content(post)	
-			title = _create_title(content) 		
-			url = _extract_url(post)
-
-			content += "\n"
-
-			if not title and not url:
-				# if we have neither url nor a title the post is empty and we skip it
-				continue
-
-			if url:
-				try:
-					preview, domain = _get_preview(url)
-					preview_md = _create_markdown(url, preview, domain)
-
-					# In case the content was empty get the title from the preview	
-					if not title:
-						title = preview.title
-					# if preview.title was also empty use the force title	
-					if not title:
-						title = preview.force_title
-							
-				except (requests.exceptions.RequestException, linkpreview.exceptions.LinkPreviewException) as err:
-					print(url)
-					print(err)
-					preview_md = "> " + url + "\n"		
-			# add markdown with preview to content of post 
-			content += preview_md
-
-			print(date_time, title)
-			filename = _slugify(date.isoformat() + "-" + title) + ".md"
-			output_path = pathlib.Path(args.output) / filename
-			with output_path.open("w") as outfile:
-				with open("post_template.md", "r") as temp_file:
-					post_template = Template(temp_file.read())	
-					markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
-					outfile.write(markdown)
-					# print(markdown)
 		
