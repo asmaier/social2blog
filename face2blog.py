@@ -20,117 +20,155 @@ def _slugify(text):
 	slug = re.sub(r'[-]+', '-', slug)
 	return slug
 
+def _valid(post):
+	if "title" in post:
+		# skip facebook posts with messsages to other peoples "Chronik"
+		if "Chronik" in post["title"]:
+			return False
+		# skip facebook posts showing that the author is is "Sicherheit"	
+		if "Sicherheit" in post["title"]:
+			return False	
+	return True	
 
-parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
-parser.add_argument("input", type=str, help="Input file - the zip file downloaded from facebook")
-parser.add_argument("output", type=str, help="Output directory for markdown files")
-args = parser.parse_args()
+def _extract_date_time(post):
+	# get timestamp	
+	t = int(post["timestamp"])
+	return datetime.fromtimestamp(t).astimezone()	
 
-target = pathlib.Path(args.input).with_suffix("")
-if not target.exists(): 
-	with zipfile.ZipFile(args.input,"r") as infile:
-		target.mkdir(parents=True, exist_ok=True) 
-		infile.extractall(target)
+def _extract_content(post):
+	content = ""
+	if "data" in post:
+		for element in post["data"]:
+			if "post" in element:
+				content = element["post"]
+	return content			
 
-posts = target / "posts" / "your_posts_1.json"
-with posts.open(encoding="raw_unicode_escape") as f:
-	# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
-	data = json.loads(f.read().encode("raw_unicode_escape").decode())
-	for post in data[820:]:
-
-		if "title" in post:
-			# skip facebook posts with messsages to other peoples "Chronik"
-			if "Chronik" in post["title"]:
-				continue
-			# skip facebook posts showing that the author is is "Sicherheit"	
-			if "Sicherheit" in post["title"]:
-				continue	
-
-		# get timestamp	
-		t = int(post["timestamp"])
-		date_time = datetime.fromtimestamp(t).astimezone()
-		date = date_time.date()	
-
-		# generate a title from the content
-		content = ""
-		if "data" in post:
-			for element in post["data"]:
-				if "post" in element:
-					content = element["post"]		
-
-		title = ""		
-		tokens = [token for token in content.split() if "http" not in token]		
-		len_tokens = len(tokens)
-		if len_tokens > 0:
-			if len_tokens > 3:
-				title = " ".join(tokens[:5]) + " ..."
-			else:
-				title = " ".join(tokens[:len_tokens]) + " ..."
-			# Put title in single quotes to prevent YAML issues in Hugo			
-			title = "'" + title + "'"   		
-
-		url = None
-		if "attachments" in post:
-			for attachment in post["attachments"]:
-				#print(attachment)
-				if "data" in attachment:
-					for element in attachment["data"]:
-						#print(element)
-						if "external_context" in element:
-							url = element["external_context"]["url"]
-		if url:
-			try:
-				# see https://stackoverflow.com/questions/27652543/how-to-use-python-requests-to-fake-a-browser-visit-a-k-a-and-generate-user-agent
-				# and http://www.useragentstring.com/pages/useragentstring.php?name=Chrome
-				headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36'} 	
-				r = requests.get(url, headers=headers)
-				uri = urlparse(r.url)
-				domain = re.sub('^www\.', '', uri.netloc)
-
-				grabber = LinkGrabber()
-				link = Link(url, grabber.get_content(url, headers=headers))
-				preview = LinkPreview(link)
-
-				# preview = linkpreview.link_preview(url)
-				content += "\n"
-				if preview.image:
-					content += "> [![]("+ preview.image + ")](" + url + ")\n"
-
-				content += "> " + domain + "\n"	
-				if preview.title:
-					content += "> ## [" + preview.title + "](" + url + ")\n"
-				else:
-					content += "> ## [" + preview.force_title + "](" + url + ")\n"	
-				content += ">\n"
-				try:
-					if preview.description:
-						content += ">" + preview.description + "\n"
-				except KeyError as kerr:
-					# catch a weird exception when reading the description
-					# (probably caused by a bug in beautifulSoup)
-					print(kerr)		
-				# In case the content was empty get the title from the preview	
-				if not title:
-					if not preview.title:
-						title = preview.force_title
-					else:
-						title = preview.title	
-			except (requests.exceptions.RequestException, linkpreview.exceptions.LinkPreviewException) as err:
-				print(err)
-				content += "\n"
-				content += "> " + url + "\n"
+def _create_title(content):
+	# generate a title from the content
+	title = ""		
+	tokens = [token for token in content.split() if "http" not in token]		
+	len_tokens = len(tokens)
+	if len_tokens > 0:
+		if len_tokens > 3:
+			title = " ".join(tokens[:5]) + " ..."
 		else:
-			# if we have neither url nor a title the post is empty and we skip it
-			if not title:
-				continue		
+			title = " ".join(tokens[:len_tokens]) + " ..."
+		# Put title in single quotes to prevent YAML issues in Hugo			
+		title = "'" + title + "'"
 
-		print(date_time, title)
-		filename = _slugify(date.isoformat() + "-" + title) + ".md"
-		output_path = pathlib.Path(args.output) / filename
-		with output_path.open("w") as outfile:
-			with open("post_template.md", "r") as temp_file:
-				post_template = Template(temp_file.read())	
-				markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
-				outfile.write(markdown)
-				# print(markdown)
+	return title
 
+def _extract_url(post):
+	url = None
+	if "attachments" in post:
+		for attachment in post["attachments"]:
+			#print(attachment)
+			if "data" in attachment:
+				for element in attachment["data"]:
+					#print(element)
+					if "external_context" in element:
+						url = element["external_context"]["url"]
+	return url							
+
+def _get_preview(url):
+    # see https://stackoverflow.com/questions/27652543/how-to-use-python-requests-to-fake-a-browser-visit-a-k-a-and-generate-user-agent
+    # and http://www.useragentstring.com/pages/useragentstring.php?name=Chrome
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36', 
+    'Referer': 'https://www.google.com'} 	
+    # Some websites (e.g. zeit.de) work better without headers
+    # Youtube always needs visitors consent with or without headers, but the Referer=https://www.google.com helps a bit.
+    # headers = None
+    r = requests.get(url, headers=headers)
+    uri = urlparse(r.url)
+    domain = re.sub('^www\.', '', uri.netloc)
+
+    grabber = LinkGrabber()
+    link = Link(url, grabber.get_content(url, headers=headers))
+    preview = LinkPreview(link)
+    return preview, domain
+
+
+def _create_markdown(url, preview, domain):
+	markdown = ""
+
+	if preview.image: 
+		markdown += "> [![]("+ preview.image + ")](" + url + ")\n"
+		
+	markdown += "> " + domain + "\n"
+	if preview.title:
+		markdown += "> ## [" + preview.title + "](" + url + ")\n"
+	else:
+		markdown += "> ## [" + preview.force_title + "](" + url + ")\n"	
+	markdown += ">\n"
+	try:
+		if preview.description:
+			markdown += ">" + preview.description + "\n"
+	except KeyError as kerr:
+        # catch a weird exception when reading the description
+        # (probably caused by a bug in beautifulSoup)
+		print(kerr)
+	return markdown			
+
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
+	parser.add_argument("input", type=str, help="Input file - the zip file downloaded from facebook")
+	parser.add_argument("output", type=str, help="Output directory for markdown files")
+	args = parser.parse_args()
+
+	target = pathlib.Path(args.input).with_suffix("")
+	if not target.exists(): 
+		with zipfile.ZipFile(args.input,"r") as infile:
+			target.mkdir(parents=True, exist_ok=True) 
+			infile.extractall(target)
+
+	posts = target / "posts" / "your_posts_1.json"
+	with posts.open(encoding="raw_unicode_escape") as f:
+		# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
+		data = json.loads(f.read().encode("raw_unicode_escape").decode())
+		for post in data[:10]:
+
+			if not _valid(post):
+				continue
+
+			date_time = _extract_date_time(post)
+			date = date_time.date()
+			content = _extract_content(post)	
+			title = _create_title(content) 		
+			url = _extract_url(post)
+
+			content += "\n"
+
+			if not title and not url:
+				# if we have neither url nor a title the post is empty and we skip it
+				continue
+
+			if url:
+				try:
+					preview, domain = _get_preview(url)
+					preview_md = _create_markdown(url, preview, domain)
+
+					# In case the content was empty get the title from the preview	
+					if not title:
+						title = preview.title
+					# if preview.title was also empty use the force title	
+					if not title:
+						title = preview.force_title
+							
+				except (requests.exceptions.RequestException, linkpreview.exceptions.LinkPreviewException) as err:
+					print(url)
+					print(err)
+					preview_md = "> " + url + "\n"		
+			# add markdown with preview to content of post 
+			content += preview_md
+
+			print(date_time, title)
+			filename = _slugify(date.isoformat() + "-" + title) + ".md"
+			output_path = pathlib.Path(args.output) / filename
+			with output_path.open("w") as outfile:
+				with open("post_template.md", "r") as temp_file:
+					post_template = Template(temp_file.read())	
+					markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
+					outfile.write(markdown)
+					# print(markdown)
+		
