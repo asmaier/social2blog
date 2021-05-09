@@ -9,6 +9,7 @@ import linkpreview
 from linkpreview import Link, LinkPreview, LinkGrabber
 import requests
 from urllib.parse import urlparse
+import concurrent.futures
 
 IN_PATH = ""
 OUT_PATH = ""
@@ -146,18 +147,18 @@ def _process_post(post):
 	# add markdown with preview to content of post 
 	content += preview_md
 
-	print(date_time, title)
 	return (title, date_time, content)
 
 def _write_outfile(title, date_time, content):
-    date = date_time.date()
-    filename = _slugify(date.isoformat() + "-" + title) + ".md"
-    output_path = pathlib.Path(OUT_PATH) / filename
-    with output_path.open("w") as outfile:
-            with open("post_template.md", "r") as temp_file:
-                    post_template = Template(temp_file.read())	
-                    markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
-                    outfile.write(markdown)
+	date = date_time.date()
+	filename = _slugify(date.isoformat() + "-" + title) + ".md"
+	output_path = pathlib.Path(OUT_PATH) / filename
+	with output_path.open("w") as outfile:
+		with open("post_template.md", "r") as temp_file:
+			post_template = Template(temp_file.read())	
+			markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
+			outfile.write(markdown)
+			print(date_time, title)
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
@@ -179,19 +180,15 @@ if __name__ == "__main__":
 		# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
 		data = json.loads(f.read().encode("raw_unicode_escape").decode())
 
+		with concurrent.futures.ThreadPoolExecutor() as executor:
+			futures = {
+        		executor.submit(_process_post, post) for post in data[:]
+    		}
 
-		# with concurrent.futures.Executor() as executor:
-    	# 	futures = {
-        # 		executor.submit(perform, post) for post in data[:10]
-    	# 	}
-
-		# for fut in concurrent.futures.as_completed(futures):
-        # 	print(f"The outcome is {fut.result()}")
-
-		for post in data[:10]:
-			result = _process_post(post)
-
+		for fut in concurrent.futures.as_completed(futures):
+			result = fut.result()
 			if result:
 				_write_outfile(result[0], result[1], result[2])
+
 
 		
