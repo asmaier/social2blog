@@ -6,13 +6,18 @@ from datetime import datetime
 from string import Template
 import re
 import linkpreview
-from linkpreview import Link, LinkPreview, LinkGrabber
+from linkpreview import Link, LinkPreview
 import requests
 from urllib.parse import urlparse
 import concurrent.futures
+from timeit import default_timer as timer
+from requests_cache import CachedSession
+
 
 IN_PATH = ""
 OUT_PATH = ""
+
+SESSION = CachedSession()
 
 # see https://stackoverflow.com/questions/5574042/string-slugification-in-python
 def _slugify(text):
@@ -57,7 +62,8 @@ def _create_title(content):
 			title = " ".join(tokens[:5]) + " ..."
 		else:
 			title = " ".join(tokens[:len_tokens]) + " ..."
-		# Put title in single quotes to prevent YAML issues in Hugo			
+		# Put title in single quotes to prevent YAML issues in Hugo
+		title = title.replace("'", "")			
 		title = "'" + title + "'"
 
 	return title
@@ -75,19 +81,20 @@ def _extract_url(post):
 	return url							
 
 def _get_preview(url):
-    # see https://stackoverflow.com/questions/27652543/how-to-use-python-requests-to-fake-a-browser-visit-a-k-a-and-generate-user-agent
-    # and http://www.useragentstring.com/pages/useragentstring.php?name=Chrome
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36', 
-    'Referer': 'https://www.google.com'} 	
-    # Some websites (e.g. zeit.de) work better without headers
-    # Youtube always needs visitors consent with or without headers, but the Referer=https://www.google.com helps a bit.
-    # headers = None
-    r = requests.get(url, headers=headers)
+	# see https://github.com/meyt/linkpreview/issues/9#issuecomment-925643793
+	# and https://developers.google.com/search/docs/advanced/crawling/overview-google-crawlers
+    headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 
+    'Referer': 'https://www.google.com'} 
+
+    r = SESSION.get(url, headers=headers)
+
+    # from_cache = 'hit' if r.from_cache else 'miss'
+    # print(f'{url} is {len(r.content)} bytes (cache {from_cache})')
+
     uri = urlparse(r.url)
     domain = re.sub('^www\.', '', uri.netloc)
 
-    grabber = LinkGrabber()
-    link = Link(url, grabber.get_content(url, headers=headers))
+    link = Link(r.url, r.text)
     preview = LinkPreview(link)
     return preview, domain
 
@@ -135,19 +142,19 @@ def _process_post(post):
 
 			# In case the content was empty get the title from the preview	
 			if not title:
-				title = preview.title
+				title = _create_title(preview.title)
 			# if preview.title was also empty use the force title	
 			if not title:
-				title = preview.force_title
+				title = _create_title(preview.force_title)
 					
 		except (requests.exceptions.RequestException, linkpreview.exceptions.LinkPreviewException) as err:
 			print(url)
 			print(err)
 			preview_md = "> " + url + "\n"		
-	# add markdown with preview to content of post 
-	content += preview_md
+		# add markdown with preview to content of post 
+		content += preview_md
 
-	return (title, date_time, content)
+	return (title, date_time, content, post)
 
 def _write_outfile(title, date_time, content):
 	date = date_time.date()
@@ -159,6 +166,7 @@ def _write_outfile(title, date_time, content):
 			markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
 			outfile.write(markdown)
 			print(date_time, title)
+	return True		
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
@@ -180,15 +188,18 @@ if __name__ == "__main__":
 		# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
 		data = json.loads(f.read().encode("raw_unicode_escape").decode())
 
+		start = timer()
 		with concurrent.futures.ThreadPoolExecutor() as executor:
 			futures = {
         		executor.submit(_process_post, post) for post in data[:]
     		}
 
-		for fut in concurrent.futures.as_completed(futures):
-			result = fut.result()
-			if result:
-				_write_outfile(result[0], result[1], result[2])
+			for fut in concurrent.futures.as_completed(futures):
+				result = fut.result()
+				if result:
+					success = _write_outfile(result[0], result[1], result[2])
+		end = timer()
+		print(end - start)			
 
 
 		

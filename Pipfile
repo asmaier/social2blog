@@ -6,6 +6,7 @@ name = "pypi"
 [packages]
 linkpreview = "*"
 requests = "*"
+requests-cache = "*"
 
 [dev-packages]
 
