@@ -1,22 +1,19 @@
 ---
 title: $title
-author: admin
+subtitle: ''
+summary: ''
+authors: ["admin"]
 date: $date
-output: pdf_document
+lastmod: $datetime
 categories: []
 tags:
 - facebook
 - german
-subtitle: ''
-summary: ''
-authors: []
-lastmod: $datetime
 featured: no
 image:
   caption: ''
   focal_point: ''
   preview_only: no
-projects: []
-slug: []
+slug: ''
 ---
 $content

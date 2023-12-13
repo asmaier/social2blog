@@ -1,4 +1,5 @@
 import argparse
+from socket import timeout
 import zipfile
 import pathlib
 import json
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 import concurrent.futures
 from timeit import default_timer as timer
 from requests_cache import CachedSession
+from requests_html import HTMLSession
 
 
 IN_PATH = ""
@@ -80,23 +82,36 @@ def _extract_url(post):
 						url = element["external_context"]["url"]
 	return url							
 
-def _get_preview(url):
-	# see https://github.com/meyt/linkpreview/issues/9#issuecomment-925643793
-	# and https://developers.google.com/search/docs/advanced/crawling/overview-google-crawlers
-    headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 
-    'Referer': 'https://www.google.com'} 
+def _get_preview(url, headers = None, session = SESSION):
 
-    r = SESSION.get(url, headers=headers)
+	if not headers:
+		# see https://github.com/meyt/linkpreview/issues/9#issuecomment-925643793
+		# and https://developers.google.com/search/docs/advanced/crawling/overview-google-crawlers
+		headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 
+		'Referer': 'https://www.google.com'}
+		# see https://github.com/meyt/linkpreview/issues/9#issuecomment-1774215623 
+		# and https://user-agents.net/bots/facebookexternalhit/versions/1-1
+		headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_1) AppleWebKit/601.2.4 (KHTML, like Gecko) Version/9.0.1 Safari/601.2.4 facebookexternalhit/1.1 Facebot'} 
+
+	r = session.get(url, headers=headers)
+
+	# r.raise_for_status()
 
     # from_cache = 'hit' if r.from_cache else 'miss'
     # print(f'{url} is {len(r.content)} bytes (cache {from_cache})')
 
-    uri = urlparse(r.url)
-    domain = re.sub('^www\.', '', uri.netloc)
+	uri = urlparse(r.url)
+	domain = re.sub('^www\\.', '', uri.netloc)
 
-    link = Link(r.url, r.text)
-    preview = LinkPreview(link)
-    return preview, domain
+	text = r.text
+	if isinstance(session, HTMLSession):
+		print("Rendering Javascript...")
+		r.html.render(sleep=1, timeout=10)
+		text = r.html.raw_html
+
+	link = Link(r.url, text)
+	preview = LinkPreview(link)
+	return preview, domain
 
 
 def _create_markdown(url, preview, domain):
@@ -156,22 +171,47 @@ def _process_post(post):
 
 	return (title, date_time, content, post)
 
-def _write_outfile(title, date_time, content):
+def _write_markdown_file(title, date_time, content, date, output_path):
+    with output_path.open("w") as outfile:
+     with open("post_template.md", "r") as temp_file:
+      post_template = Template(temp_file.read())	
+      markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
+      outfile.write(markdown)
+      print(date_time, title)
+
+def _read_content(output_path):
+	with output_path.open("r") as oldfile:
+		lines = oldfile.readlines()
+
+		frontmatter = []
+		for i,line in enumerate(lines):
+			if line.startswith("---"):
+				frontmatter.append(i)
+			if len(frontmatter) > 1:
+				break
+		return "".join(lines[frontmatter[1]+1:])	
+
+def _write_outfile(title, date_time, content, update_header=False):
 	date = date_time.date()
 	filename = _slugify(date.isoformat() + "-" + title) + ".md"
 	output_path = pathlib.Path(OUT_PATH) / filename
-	with output_path.open("w") as outfile:
-		with open("post_template.md", "r") as temp_file:
-			post_template = Template(temp_file.read())	
-			markdown = post_template.substitute(content=content,title=title,datetime=date_time.isoformat(),date=date.isoformat())
-			outfile.write(markdown)
-			print(date_time, title)
-	return True		
+	if not output_path.exists():
+		_write_markdown_file(title, date_time, content, date, output_path)
+	else:
+		if update_header:
+			print("Updating header of existing file " + filename)
+			old_content = _read_content(output_path)
+			_write_markdown_file(title, date_time, old_content, date, output_path)
+		else:
+			print("Skipping existing file " + filename)
+				
+	return True	
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
 	parser.add_argument("input", type=str, help="Input file - the zip file downloaded from facebook")
 	parser.add_argument("output", type=str, help="Output directory for markdown files")
+	parser.add_argument("-u", "--update", action="store_true", help="Update header of existing files. Leaves content of existing files intact.")
 	args = parser.parse_args()
 	
 	IN_PATH = args.input
@@ -197,7 +237,7 @@ if __name__ == "__main__":
 			for fut in concurrent.futures.as_completed(futures):
 				result = fut.result()
 				if result:
-					success = _write_outfile(result[0], result[1], result[2])
+					success = _write_outfile(result[0], result[1], result[2], args.update)
 		end = timer()
 		print(end - start)			
 
