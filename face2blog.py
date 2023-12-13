@@ -87,8 +87,7 @@ def _get_preview(url, headers = None, session = SESSION):
 	if not headers:
 		# see https://github.com/meyt/linkpreview/issues/9#issuecomment-925643793
 		# and https://developers.google.com/search/docs/advanced/crawling/overview-google-crawlers
-		headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 
-		'Referer': 'https://www.google.com'}
+		# headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 'Referer': 'https://www.google.com'}
 		# see https://github.com/meyt/linkpreview/issues/9#issuecomment-1774215623 
 		# and https://user-agents.net/bots/facebookexternalhit/versions/1-1
 		headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_1) AppleWebKit/601.2.4 (KHTML, like Gecko) Version/9.0.1 Safari/601.2.4 facebookexternalhit/1.1 Facebot'} 
@@ -189,6 +188,7 @@ def _read_content(output_path):
 				frontmatter.append(i)
 			if len(frontmatter) > 1:
 				break
+		# The content we want to extract starts at the line after the frontmatter	
 		return "".join(lines[frontmatter[1]+1:])	
 
 def _write_outfile(title, date_time, content, update_header=False):
@@ -218,6 +218,7 @@ if __name__ == "__main__":
 	OUT_PATH = args.output
 
 	target = pathlib.Path(args.input).with_suffix("")
+	# only unzip the input file, if it wasn't already unzipped, because it might take a long time
 	if not target.exists(): 
 		with zipfile.ZipFile(IN_PATH,"r") as infile:
 			target.mkdir(parents=True, exist_ok=True) 
