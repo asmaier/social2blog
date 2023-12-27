@@ -11,9 +11,10 @@ tags:
 - german
 featured: no
 image:
+  placement: 1
   caption: ''
-  focal_point: ''
-  preview_only: no
+  focal_point: 'Smart'
+  preview_only: true
 slug: ''
 ---
 $content

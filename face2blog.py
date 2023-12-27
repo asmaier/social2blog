@@ -19,6 +19,9 @@ from requests_html import HTMLSession
 IN_PATH = ""
 OUT_PATH = ""
 
+POST_PATH = pathlib.Path("posts/your_posts_1.json")
+POST_PATH = pathlib.Path("your_activity_across_facebook/posts/your_posts__check_ins__photos_and_videos_1.json")
+
 SESSION = CachedSession()
 
 # see https://stackoverflow.com/questions/5574042/string-slugification-in-python
@@ -142,6 +145,7 @@ def _process_post(post):
 	content = _extract_content(post)	
 	title = _create_title(content) 		
 	url = _extract_url(post)
+	image_url = None
 
 	content += "\n"
 
@@ -153,6 +157,7 @@ def _process_post(post):
 		try:
 			preview, domain = _get_preview(url)
 			preview_md = _create_markdown(url, preview, domain)
+			image_url = preview.image
 
 			# In case the content was empty get the title from the preview	
 			if not title:
@@ -168,7 +173,7 @@ def _process_post(post):
 		# add markdown with preview to content of post 
 		content += preview_md
 
-	return (title, date_time, content, post)
+	return (title, date_time, content, image_url)
 
 def _write_markdown_file(title, date_time, content, date, output_path):
     with output_path.open("w") as outfile:
@@ -205,7 +210,41 @@ def _write_outfile(title, date_time, content, update_header=False):
 		else:
 			print("Skipping existing file " + filename)
 				
-	return True	
+	return True
+
+def _write_pagebundle(title, date_time, content, image_url=None, update_header=False ):
+	date = date_time.date()
+	dirname = _slugify(date.isoformat() + "-" + title)
+	output_path = pathlib.Path(OUT_PATH) / dirname / "index.md"
+
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+
+	if not output_path.exists():
+		_write_markdown_file(title, date_time, content, date, output_path)
+	else:
+		if update_header:
+			print(f"Updating header of existing file {output_path}")
+			old_content = _read_content(output_path)
+			_write_markdown_file(title, date_time, old_content, date, output_path)
+		else:
+			print(f"Skipping existing file {output_path}")
+
+	if image_url:
+		# see https://stackoverflow.com/questions/13137817/how-to-download-image-using-requests
+		# image_name = url.split("/")[-1]
+		# see https://docs.hugoblox.com/reference/page-features/
+		image_path = output_path.parent / "featured.jpg"
+		print(f"Storing preview image {image_url}")
+		try:
+			r = SESSION.get(image_url)
+
+			if r.status_code == 200:
+				with image_path.open('wb') as outfile:
+					outfile.write(r.content)
+		except requests.exceptions.RequestException as err:
+			print(err)
+
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Convert data from facebook to markdown blog posts.")
@@ -224,7 +263,7 @@ if __name__ == "__main__":
 			target.mkdir(parents=True, exist_ok=True) 
 			infile.extractall(target)
 
-	posts = target / "posts" / "your_posts_1.json"
+	posts = target / POST_PATH
 	with posts.open(encoding="raw_unicode_escape") as f:
 		# see https://stackoverflow.com/questions/50540370/decode-utf-8-encoding-in-json-string
 		data = json.loads(f.read().encode("raw_unicode_escape").decode())
@@ -238,7 +277,7 @@ if __name__ == "__main__":
 			for fut in concurrent.futures.as_completed(futures):
 				result = fut.result()
 				if result:
-					success = _write_outfile(result[0], result[1], result[2], args.update)
+					success = _write_pagebundle(result[0], result[1], result[2], result[3], args.update)
 		end = timer()
 		print(end - start)			
 
