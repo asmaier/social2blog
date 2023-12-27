@@ -71,7 +71,7 @@ See all option here
 - replace dead links with a link to the webarchive 
 - automatically tag the content (see e.g <https://github.com/jaketae/auto-tagger>)
 - download media of the post
-- download the preview image, so it can be used as cover image for the post
+- ~~download the preview image, so it can be used as cover image for the post~~
 
     
 
