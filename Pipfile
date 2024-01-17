@@ -4,11 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-linkpreview = "*"
+linkpreview = "<0.8.2"
 requests = "*"
 requests-cache = "<1.0.0"
 pytest = "*"
 requests-html = "*"
+filetype = "*"
 
 [dev-packages]
 
